@@ -21,6 +21,7 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -45,6 +46,8 @@ public class GRpcServerRunner implements CommandLineRunner, DisposableBean {
     private Consumer<ServerBuilder<?>> configurator;
 
     private Server server;
+
+    private CountDownLatch latch = new CountDownLatch(1);
 
     private final ServerBuilder<?> serverBuilder;
 
@@ -131,9 +134,9 @@ public class GRpcServerRunner implements CommandLineRunner, DisposableBean {
     private void startDaemonAwaitThread() {
         Thread awaitThread = new Thread(()->{
                 try {
-                    GRpcServerRunner.this.server.awaitTermination();
+                    latch.await();
                 } catch (InterruptedException e) {
-                    log.error("gRPC server stopped.", e);
+                    log.error("gRPC server awaiter interrupted.", e);
                 }
             });
         awaitThread.setName("grpc-server-awaiter");
@@ -150,14 +153,15 @@ public class GRpcServerRunner implements CommandLineRunner, DisposableBean {
             s.shutdown();
             int shutdownGrace = gRpcServerProperties.getShutdownGrace();
             try {
-                // If shutdownGrace is 0, then don't call awaitTermination
-                if (shutdownGrace < 0) {
+                if (shutdownGrace < 1) {
                     s.awaitTermination();
-                } else if (shutdownGrace > 0) {
+                } else {
                     s.awaitTermination(shutdownGrace, TimeUnit.SECONDS);
                 }
             } catch (InterruptedException e) {
                 log.error("gRPC server interrupted during destroy.", e);
+            }finally {
+                latch.countDown();
             }
             log.info("gRPC server stopped.");
         });
